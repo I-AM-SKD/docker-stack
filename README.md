@@ -6,56 +6,72 @@ A production-grade, network-segmented 3-tier microservice architecture deployed 
 
 ## Architecture Overview
 
-```
-                                      AWS EC2 Host (Ubuntu 24.04 LTS)
-                            Security Group: Inbound TCP 22 (SSH) & TCP 80 (HTTP) ONLY
-                                             [Public IP: 15.206.90.254]
-                                                         │
-  Client / Browser / curl                                │
-             │                                           │
-             ▼                                           │
-      HTTP Port 80 ──────────────────────────────────────┼─────────────┐
-                                                         │             │
-                                 Docker Network: frontend_net          │
-                         ┌───────────────────────────────────────────┐ │
-                         │ proxy (Nginx 1.27-alpine)                 │ │
-                         │   - ports: "80:80" (Single ingress point) │ │
-                         │   - Reverse-proxies /api/* & /health      │ │
-                         │   - Cannot route to db (No route)         │ │
-                         └─────────────────────┬─────────────────────┘ │
-                                               │                       │
-                                               ▼                       │
-                         ┌───────────────────────────────────────────┐ │
-                         │ api (Node.js Express / Node 22-Alpine)    │ │
-                         │   - 0.0.0.0:3000 (NO exposed host ports)  │ │
-                         │   - Non-root user: USER node (UID 1000)   │ │
-                         │   - Connects to frontend_net & backend_net│ │
-                         └─────────────────────┬─────────────────────┘ │
-                                               │                       │
-                                 Docker Network: backend_net           │
-                                       (internal: true)                │
-                         ┌───────────────────────────────────────────┐ │
-                         │ db (PostgreSQL 17-alpine)                 │ │
-                         │   - 5432 (NO exposed host ports!)         │ │
-                         │   - Volume: pgdata                        │ │
-                         │   - Network has NO outbound internet      │ │
-                         └─────────────────────▲─────────────────────┘ │
-                                               │                       │
-                       ┌───────────────────────┴────────────────────┐  │
-                       │ Linux Cron (Hourly)                        │  │
-                       │   /scripts/backup-db.sh                    │  │
-                       │   - docker exec pg_dump                    │  │
-                       │   - gzip on the fly                        │  │
-                       │   - aws s3 cp (Uses EC2 IAM Instance Role) │  │
-                       └───────────────────────┬────────────────────┘  │
-                                               │                       │
-                                               │ (Zero AWS keys stored)│
-                                               ▼                       │
-                                   ┌──────────────────────┐            │
-                                   │  AWS S3 Bucket       │            │
-                                   │  sandeep-docker-     │◄───────────┘
-                                   │  stack-backups-2026  │
-                                   └──────────────────────┘
+![System Architecture Diagram](docs/images/architecture-diagram.png)
+
+### Architectural Flowchart & Network Topology
+
+```mermaid
+flowchart TD
+    subgraph Internet["Public Internet"]
+        Client["Client / Web Browser / curl"]
+    end
+
+    subgraph Host["AWS EC2 Host (Ubuntu 24.04 LTS • 15.206.90.254)"]
+        subgraph SG["Security Group Ingress"]
+            P80["Inbound TCP :80 (HTTP)"]
+            P22["Inbound TCP :22 (SSH)"]
+        end
+
+        subgraph FN["Docker Network: frontend_net (bridge)"]
+            Proxy["proxy (Nginx 1.27-alpine)<br/>• Host Port: 80:80 (ONLY published port)<br/>• Reverse-proxies /api/* & /health<br/>• Upstream Keepalive: 16"]
+        end
+
+        subgraph DualHomed["Bridged Tier"]
+            API["api (Node.js 22-Alpine / Express)<br/>• 0.0.0.0:3000 (NO host port exposed!)<br/>• Non-root: USER node (UID 1000)<br/>• Dual-homed: frontend_net + backend_net<br/>• Limits: 0.50 CPU, 256MB RAM"]
+        end
+
+        subgraph BN["Docker Network: backend_net (internal: true)"]
+            DB[("db (PostgreSQL 17-alpine)<br/>• Port 5432 (Internal ONLY)<br/>• NO internet outbound access<br/>• Volume: pgdata")]
+        end
+
+        subgraph Automation["Host Automation"]
+            Cron["Linux Cron (Hourly)<br/>/scripts/backup-db.sh<br/>• pg_dump over stdout via docker exec -T<br/>• gzip on-the-fly<br/>• set -euo pipefail"]
+        end
+    end
+
+    subgraph AWS["AWS Cloud Services"]
+        IAM["IAM Instance Profile<br/>Role: EC2-S3-Backup-Role<br/>• Zero AWS access keys on server disk"]
+        S3[("Amazon S3 Bucket<br/>sandeep-docker-stack-backups-2026<br/>• Prefix: /backups/tasksdb_*.sql.gz<br/>• Block Public Access: ON<br/>• Region: ap-south-1")]
+    end
+
+    %% Network flows
+    Client -->|HTTP Request| P80
+    P80 --> Proxy
+    Proxy -->|proxy_pass http://api:3000| API
+    Proxy -.->|Route Blocked / Bad Address| DB
+    API -->|Port 5432 query / pool| DB
+    DB -->|pgdata volume mount| DB
+
+    %% Backup flows
+    DB -.->|docker compose exec -T db pg_dump| Cron
+    Host -->|Instance Metadata / Temporary STS Token| IAM
+    IAM -.->|Grants S3 PutObject Permission| Cron
+    Cron -->|aws s3 cp compressed archive| S3
+
+    %% Styling
+    classDef internet fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc;
+    classDef proxy fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#f0fdf4;
+    classDef api fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#eff6ff;
+    classDef db fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#e0e7ff;
+    classDef aws fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fef3c7;
+    classDef cron fill:#262626,stroke:#a3a3a3,stroke-width:2px,color:#fafafa;
+
+    class Client internet;
+    class Proxy proxy;
+    class API api;
+    class DB db;
+    class IAM,S3 aws;
+    class Cron cron;
 ```
 
 ---

@@ -4,6 +4,12 @@ This manual provides the step-by-step instructions to build, configure, deploy, 
 
 ---
 
+## Architecture Blueprint
+
+![Production Architecture Diagram](docs/images/architecture-diagram.png)
+
+---
+
 ## Table of Contents
 1. [Phase 1: Project Directory & Git Setup](#phase-1-project-directory--git-setup)
 2. [Phase 2: Building & Containerizing the Node.js API](#phase-2-building--containerizing-the-nodejs-api)
