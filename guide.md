@@ -1,6 +1,6 @@
 # Complete Step-by-Step Implementation Guide & Rebuild Manual
 
-This manual provides the step-by-step instructions to build, configure, deploy, verify, and restore the 3-Tier Node.js + PostgreSQL + Nginx production stack with AWS S3 backups.
+This manual provides the step-by-step instructions to build, configure, deploy, verify, and restore the 3-Tier Node.js + PostgreSQL + Nginx production stack with AWS S3 backups..
 
 ---
 
